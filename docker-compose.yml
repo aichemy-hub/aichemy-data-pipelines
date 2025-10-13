@@ -1,0 +1,17 @@
+version: "3.9"
+services:
+  pwiz-watch:
+    image: pwiz-watch
+    build: .
+    volumes:
+      - ./data:/data
+    environment:
+      WATCH_DIR: /data
+      OUTPUT_DIR: /data/mzML
+      QUIET_SECONDS: "20"
+      CHECK_INTERVAL: "5"
+      BOOTSTRAP: "1"
+      FORMAT: "mzML"   # or "mzXML"
+      GZIP: "1"        # compressed .mzML.gz / .mzXML.gz
+      LOG_LEVEL: "INFO"
+    restart: unless-stopped
