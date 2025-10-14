@@ -3,6 +3,7 @@ services:
   pwiz-watch:
     image: pwiz-watch
     build: .
+    platform: linux/amd64         # pwiz image is amd64-only
     volumes:
       - ./data:/data
     environment:
@@ -11,7 +12,8 @@ services:
       QUIET_SECONDS: "20"
       CHECK_INTERVAL: "5"
       BOOTSTRAP: "1"
-      FORMAT: "mzML"   # or "mzXML"
-      GZIP: "1"        # compressed .mzML.gz / .mzXML.gz
+      FORMAT: "mzML"              # or "mzXML"
+      GZIP: "1"                   # write .mzML.gz
       LOG_LEVEL: "INFO"
+      MSCONVERT_LAUNCH: "auto"    # auto | native | wine
     restart: unless-stopped
