@@ -86,26 +86,34 @@ def wait_for_quiet(dpath: Path, quiet_s: int, interval_s: int) -> None:
 
 
 def output_name(base: str) -> str:
-    """Construct output filename with timestamp and extension."""
-    ext = "mzml" if FORMAT == "mzml" else "mzxml"
-    if GZIP:
-        return f"{base}-{ts_utc()}.{ext}.gz"
-    return f"{base}-{ts_utc()}.{ext}"
+    """Construct output *stem* with timestamp (no extension)."""
+    return f"{base}-{ts_utc()}"
 
 
 def already_converted(base: str) -> bool:
-    """Best-effort check: any file starting with base-*.mzML(.gz) or mzXML(.gz)?"""
+    """Best-effort check for any existing output for this base, case-insensitive on extension."""
     if not OUTPUT_DIR.exists():
         return False
-    ext = "mzml" if FORMAT == "mzml" else "mzxml"
-    glob_a = list(OUTPUT_DIR.glob(f"{base}-*.{ext}"))
-    glob_b = list(OUTPUT_DIR.glob(f"{base}-*.{ext}.gz"))
-    return len(glob_a) + len(glob_b) > 0
+    if FORMAT == "mzml":
+        exts = ["mzml", "mzML"]
+    else:
+        exts = ["mzxml", "mzXML"]
+    for ext in exts:
+        if list(OUTPUT_DIR.glob(f"{base}-*.{ext}")):
+            return True
+        if list(OUTPUT_DIR.glob(f"{base}-*.{ext}.gz")):
+            return True
+    return False
 
 
-def msconvert(dpath: Path, outpath: Path) -> int:
-    """Run msconvert for a .d directory to the specific outpath filename."""
+def msconvert(dpath: Path, outfile_stem: str) -> int:
+    """Run msconvert for a .d directory; outfile_stem has no extension.
+    msconvert will add .mzML/.mzXML and .gz automatically when requested.
+    """
     fmt_flag = "--mzML" if FORMAT == "mzml" else "--mzXML"
+    predicted_ext = "mzML" if FORMAT == "mzml" else "mzXML"
+    predicted_name = f"{outfile_stem}.{predicted_ext}{'.gz' if GZIP else ''}"
+    predicted_path = OUTPUT_DIR / predicted_name
 
     cmd = [
         "wine",
@@ -115,13 +123,10 @@ def msconvert(dpath: Path, outpath: Path) -> int:
         "--outdir",
         str(OUTPUT_DIR),
         "--outfile",
-        outpath.name,
+        outfile_stem,
     ]
     if GZIP:
         cmd.append("--gzip")
-
-    # You can add default filters here if desired, e.g. centroiding:
-    # cmd += ["--filter", "peakPicking true 1-"]
 
     log.info("Running: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -134,7 +139,7 @@ def msconvert(dpath: Path, outpath: Path) -> int:
             result.stderr,
         )
     else:
-        log.info("msconvert OK. Output: %s", outpath)
+        log.info("msconvert OK. Output (predicted): %s", predicted_path)
 
     return result.returncode
 
@@ -155,12 +160,14 @@ def convert_dir(dpath: Path) -> None:
 
     # Ensure output dir
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    outname = output_name(base)
-    outpath = OUTPUT_DIR / outname
 
-    rc = msconvert(dpath, outpath)
+    outfile_stem = output_name(base)
+
+    rc = msconvert(dpath, outfile_stem)
     if rc == 0:
-        log.info("Done: %s", outpath)
+        final_ext = "mzML" if FORMAT == "mzml" else "mzXML"
+        final_name = f"{outfile_stem}.{final_ext}{'.gz' if GZIP else ''}"
+        log.info("Done: %s", OUTPUT_DIR / final_name)
     else:
         log.error("Conversion failed for: %s", dpath)
 
