@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import contextlib
 import os
 import sys
 import time
@@ -6,7 +7,9 @@ import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
+import tarfile
+import shutil
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
@@ -33,6 +36,21 @@ if FORMAT not in {"mzml", "mzxml"}:
 
 # Compress output (1=yes, 0=no)
 GZIP = os.getenv("GZIP", "1") not in ("0", "false", "False")
+
+# Archive the original .d after successful conversion (1=yes, 0=no)
+ARCHIVE_ORIGINAL = os.getenv("ARCHIVE_ORIGINAL", "1") not in ("0", "false", "False")
+
+# Where to put archives (default inside OUTPUT_DIR/archives)
+ARCHIVE_DIR = Path(os.getenv("ARCHIVE_DIR", str(OUTPUT_DIR / "archives")))
+
+# Use gzip? (1 = .tar.gz, 0 = .tar)
+ARCHIVE_GZIP = os.getenv("ARCHIVE_GZIP", "1") not in ("0", "false", "False")
+
+# After archiving, delete the original .d directory? (1=yes, 0=no)
+DELETE_ORIGINAL_AFTER_ARCHIVE = os.getenv("DELETE_ORIGINAL_AFTER_ARCHIVE", "1") not in ("0", "false", "False")
+
+# What to do if an archive already exists: "skip" or "replace"
+ARCHIVE_EXISTS_POLICY = os.getenv("ARCHIVE_EXISTS_POLICY", "skip").lower()  # skip|replace
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -89,6 +107,11 @@ def output_name(base: str) -> str:
     """Construct output *stem* with timestamp (no extension)."""
     return f"{base}-{ts_utc()}"
 
+def archive_name(base: str) -> str:
+    """Archive filename for the original .d directory (no spaces in name)."""
+    suffix = ".tar.gz" if ARCHIVE_GZIP else ".tar"
+    # keep the same timestamping convention as outputs
+    return f"{base}-{ts_utc()}{suffix}"
 
 def already_converted(base: str) -> bool:
     """Best-effort check for any existing output for this base, case-insensitive on extension."""
@@ -143,6 +166,61 @@ def msconvert(dpath: Path, outfile_stem: str) -> int:
 
     return result.returncode
 
+def archive_original(dpath: Path, base: str) -> Optional[Path]:
+    """
+    Create a tar(.gz) of the .d directory into ARCHIVE_DIR and optionally delete the original.
+    Returns the archive path, or None if skipped.
+    """
+    if not dpath.exists() or not dpath.is_dir():
+        log.warning("Cannot archive; source missing: %s", dpath)
+        return None
+
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # If an archive for this base already exists, follow policy.
+    # We don't try to guess timestamps; just detect any prior archive for that base.
+    existing = list(ARCHIVE_DIR.glob(f"{base}-*.tar")) + list(ARCHIVE_DIR.glob(f"{base}-*.tar.gz"))
+    if existing and ARCHIVE_EXISTS_POLICY == "skip":
+        log.info("Archive already exists for %s; skipping per policy.", base)
+        return None
+    elif existing and ARCHIVE_EXISTS_POLICY == "replace":
+        for p in existing:
+            try:
+                p.unlink()
+            except Exception as e:
+                log.warning("Failed to remove existing archive %s: %s", p, e)
+
+    final_name = archive_name(base)
+    final_path = ARCHIVE_DIR / final_name
+    tmp_path = ARCHIVE_DIR / (final_name + ".partial")
+
+    src_size = dir_size_bytes(dpath)
+
+    try:
+        mode = "w:gz" if ARCHIVE_GZIP else "w"
+        with tarfile.open(tmp_path, mode) as tf:
+            # Store folder as <base>.d inside the tar
+            tf.add(dpath, arcname=dpath.name)
+        tmp_path.replace(final_path)  # atomic rename
+        arc_size = final_path.stat().st_size
+        ratio = f"{(1 - (arc_size / src_size)) * 100:.1f}%" if src_size > 0 else "n/a"
+        log.info("Archived %s -> %s (src %.2f MB -> arc %.2f MB, saved %s)",
+                 dpath, final_path, src_size / (1024**2), arc_size / (1024**2), ratio)
+
+        if DELETE_ORIGINAL_AFTER_ARCHIVE:
+            try:
+                shutil.rmtree(dpath)
+                log.info("Deleted original directory after archive: %s", dpath)
+            except Exception as e:
+                log.warning("Failed to delete original %s: %s", dpath, e)
+
+        return final_path
+    except Exception as e:
+        log.error("Archiving failed for %s: %s", dpath, e)
+        # Clean up partial
+        with contextlib.suppress(Exception):
+            tmp_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+        return None
 
 def convert_dir(dpath: Path) -> None:
     """Convert one .d directory if not already done."""
@@ -167,10 +245,14 @@ def convert_dir(dpath: Path) -> None:
     if rc == 0:
         final_ext = "mzML" if FORMAT == "mzml" else "mzXML"
         final_name = f"{outfile_stem}.{final_ext}{'.gz' if GZIP else ''}"
-        log.info("Done: %s", OUTPUT_DIR / final_name)
+        final_path = OUTPUT_DIR / final_name
+        log.info("Done: %s", final_path)
+
+        if ARCHIVE_ORIGINAL:
+            base = dpath.name[:-2] if dpath.name.endswith(".d") else dpath.name
+            archive_original(dpath, base)
     else:
         log.error("Conversion failed for: %s", dpath)
-
 
 def handle_candidate(path: Path) -> None:
     """Debounce and schedule a convert for a candidate .d dir."""
@@ -222,13 +304,10 @@ def main():
 
     log.info("=== ProteoWizard auto-converter (Python watchdog) ===")
     log.info(
-        "Watch: %s | Output: %s | Quiet: %ss | Interval: %ss | GZIP: %s | FORMAT: %s",
-        WATCH_DIR,
-        OUTPUT_DIR,
-        QUIET_SECONDS,
-        CHECK_INTERVAL,
-        GZIP,
-        FORMAT.upper(),
+        "Watch: %s | Output: %s | Quiet: %ss | Interval: %ss | GZIP: %s | FORMAT: %s | "
+        "Archive: %s | Archive dir: %s | Archive gzip: %s | Delete original: %s | Exists policy: %s",
+        WATCH_DIR, OUTPUT_DIR, QUIET_SECONDS, CHECK_INTERVAL, GZIP, FORMAT.upper(),
+        ARCHIVE_ORIGINAL, ARCHIVE_DIR, ARCHIVE_GZIP, DELETE_ORIGINAL_AFTER_ARCHIVE, ARCHIVE_EXISTS_POLICY,
     )
 
     if BOOTSTRAP:
