@@ -108,6 +108,7 @@ def msconvert(dpath: Path, outpath: Path) -> int:
     fmt_flag = "--mzML" if FORMAT == "mzml" else "--mzXML"
 
     cmd = [
+        "wine",
         "msconvert",
         str(dpath),
         fmt_flag,

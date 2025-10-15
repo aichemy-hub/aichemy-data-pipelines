@@ -9,11 +9,11 @@ services:
     environment:
       WATCH_DIR: /data
       OUTPUT_DIR: /data/mzML
-      QUIET_SECONDS: "20"
+      QUIET_SECONDS: "10"
       CHECK_INTERVAL: "5"
       BOOTSTRAP: "1"
       FORMAT: "mzML"              # or "mzXML"
       GZIP: "1"                   # write .mzML.gz
-      LOG_LEVEL: "INFO"
-      MSCONVERT_LAUNCH: "auto"    # auto | native | wine
+      LOG_LEVEL: "DEBUG"
+      WINEDEBUG: "-all"
     restart: unless-stopped
