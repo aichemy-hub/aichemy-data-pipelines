@@ -1,19 +1,60 @@
 version: "3.9"
+
+env_file:
+  - .env
+
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
+  AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+
 services:
-  pwiz-watch:
-    image: pwiz-watch
-    build: .
-    platform: linux/amd64         # pwiz image is amd64-only
-    volumes:
-      - ./data:/data
+  postgres:
+    image: postgres:16
     environment:
-      WATCH_DIR: /data
-      OUTPUT_DIR: /data/mzML
-      QUIET_SECONDS: "10"
-      CHECK_INTERVAL: "5"
-      BOOTSTRAP: "1"
-      FORMAT: "mzML"              # or "mzXML"
-      GZIP: "1"                   # write .mzML.gz
-      LOG_LEVEL: "DEBUG"
-      WINEDEBUG: "-all"
-    restart: unless-stopped
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: [ "pgdata:/var/lib/postgresql/data" ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow-webserver:
+    image: apache/airflow:2.9.3
+    depends_on: [ postgres, airflow-scheduler, airflow-init ]
+    environment: *airflow-env
+    ports: [ "8080:8080" ]
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock     # for DockerOperator
+      - ./host_data:/data                             # host data visible to Airflow
+    command: webserver
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.3
+    depends_on: [ postgres, airflow-init ]
+    environment: *airflow-env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./host_data:/data
+    command: scheduler
+
+  airflow-init:
+    image: apache/airflow:2.9.3
+    depends_on: [ postgres ]
+    environment: *airflow-env
+    entrypoint: ["/bin/bash","-lc"]
+    command: >
+      "airflow db upgrade &&
+       airflow users create --role Admin --username admin --password admin
+       --firstname A --lastname D --email admin@example.com || true &&
+       airflow pools set msconvert 4 'ProteoWizard conversions (parallel cap)' || true"
+
+volumes:
+  pgdata:
