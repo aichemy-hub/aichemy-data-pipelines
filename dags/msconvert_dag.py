@@ -186,8 +186,8 @@ with DAG(
     def archive_original(payload: Dict[str, str]):
         if not ARCHIVE_ORIG:
             return
-        dpath = Path(payload["dpath"])
-        base = payload["base"]
+        dpath = Path(payload["IN"])
+        base = payload["BASE"]
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
         # policy: skip or replace prior archives of this base
         if ARCHIVE_POLICY == "replace":
