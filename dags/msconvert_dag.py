@@ -3,6 +3,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import os, time, tarfile, shutil
 from typing import List, Dict
+import logging
+import contextlib
 
 from airflow import DAG
 from airflow.decorators import task
@@ -49,6 +51,8 @@ PRIVILEGED = Variable.get("MS_DOCKER_PRIVILEGED", default_var="true").lower() in
 POOL_NAME = Variable.get("MS_POOL", default_var="msconvert")  # controls concurrency
 HOST_DATA_DIR = Path(Variable.get("MS_HOST_DATA_DIR", default_var="/ABS/PATH/TO/host_data"))
 
+# Logging
+log = logging.getLogger("msconvert.archive")
 
 # ---------------------------
 # Helpers
@@ -185,36 +189,65 @@ with DAG(
     @task
     def archive_original(payload: Dict[str, str]):
         if not ARCHIVE_ORIG:
+            log.info("ARCHIVE_ORIG disabled; skipping archive step.")
             return
         dpath = Path(payload["IN"])
-        base = payload["BASE"]
-        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        base  = payload["BASE"]
+        log.info("Archive task starting | dpath=%s base=%s ARCHIVE_DIR=%s DELETE_ORIG=%s GZIP=%s POLICY=%s",
+         dpath, base, ARCHIVE_DIR, DELETE_ORIG, ARCHIVE_GZIP, ARCHIVE_POLICY)
+        
+        # guard to ensure the expected output exists before archiving
+        out = OUTPUT_DIR / payload.get("OUTFILE", "")
+        if not out.exists():
+            log.warning("Expected output file is missing; will skip archive. out=%s", out)
+            return
+        else:
+            try:
+                log.info("Confirmed output exists: %s (size=%d bytes)", out, out.stat().st_size)
+            except FileNotFoundError:
+                log.warning("Race on output stat; skipping archive. out=%s", out)
+                return
+        
         # policy: skip or replace prior archives of this base
+        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
         if ARCHIVE_POLICY == "replace":
-            for p in list(ARCHIVE_DIR.glob(f"{base}-*.tar")) + list(
-                ARCHIVE_DIR.glob(f"{base}-*.tar.gz")
-            ):
+            log.info("Archive policy=replace: removing any existing archives for base=%s", base)
+            for p in list(ARCHIVE_DIR.glob(f"{base}-*.tar")) + list(ARCHIVE_DIR.glob(f"{base}-*.tar.gz")):
                 try:
                     p.unlink()
-                except Exception:
-                    pass
+                    log.info("Removed old archive: %s", p)
+                except Exception as e:
+                    log.warning("Failed to remove existing archive %s: %s", p, e)
 
+        src_bytes = dir_size_bytes(dpath)
+        log.info("Archiving source dir %s (size=%.2f MB) into %s", dpath, src_bytes / (1024**2), ARCHIVE_DIR)
+        
         mode = "w:gz" if ARCHIVE_GZIP else "w"
         suffix = ".tar.gz" if ARCHIVE_GZIP else ".tar"
         tmp = ARCHIVE_DIR / f"{base}-{ts_utc()}{suffix}.partial"
         final = Path(str(tmp).removesuffix(".partial"))
 
-        import contextlib
-
         try:
             with tarfile.open(tmp, mode) as tf:
                 tf.add(dpath, arcname=dpath.name)
             tmp.replace(final)
+            arc_size = final.stat().st_size
+            saved_pct = (1 - (arc_size / src_bytes)) * 100 if src_bytes > 0 else 0.0
+            log.info("Archive complete: %s (%.2f MB). Saved ~%.1f%% vs source.",
+                    final, arc_size / (1024**2), saved_pct)
+
             if DELETE_ORIG:
-                shutil.rmtree(dpath, ignore_errors=False)
-        except Exception:
+                try:
+                    shutil.rmtree(dpath, ignore_errors=False)
+                    log.info("Deleted original directory after archive: %s", dpath)
+                except Exception as e:
+                    log.warning("Failed to delete original %s: %s", dpath, e)
+        except Exception as e:
+            log.exception("Archiving failed for %s -> %s: %s", dpath, final, e)
             with contextlib.suppress(Exception):
                 tmp.unlink(missing_ok=True)
+            # Let the task fail so we can see it in the UI
+            raise
 
     finalized = archive_original.expand(payload=prepared)
 
