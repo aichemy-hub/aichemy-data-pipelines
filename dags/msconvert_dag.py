@@ -47,6 +47,7 @@ PRIVILEGED = Variable.get("MS_DOCKER_PRIVILEGED", default_var="true").lower() in
 )
 
 POOL_NAME = Variable.get("MS_POOL", default_var="msconvert")  # controls concurrency
+HOST_DATA_DIR = Path(Variable.get("MS_HOST_DATA_DIR", default_var="/ABS/PATH/TO/host_data"))
 
 
 # ---------------------------
@@ -151,7 +152,7 @@ with DAG(
         api_version="auto",
         docker_url="unix://var/run/docker.sock",
         mount_tmp_dir=False,
-        mounts=[Mount(source=str(WATCH_DIR), target="/data", type="bind", read_only=False)],
+        mounts=[Mount(source=str(HOST_DATA_DIR), target="/data", type="bind", read_only=False)],
         privileged=PRIVILEGED,
         pool=POOL_NAME,
         auto_remove=True,

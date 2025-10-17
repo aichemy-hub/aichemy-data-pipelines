@@ -24,7 +24,11 @@ services:
   airflow-webserver:
     image: apache/airflow:2.9.3
     depends_on: [ postgres, airflow-scheduler, airflow-init ]
-    environment: *airflow-env
+    environment:
+      <<: *airflow-env
+      DOCKER_HOST: unix:///var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID}"
     ports: [ "8080:8080" ]
     volumes:
       - ./dags:/opt/airflow/dags
@@ -35,7 +39,11 @@ services:
   airflow-scheduler:
     image: apache/airflow:2.9.3
     depends_on: [ postgres, airflow-init ]
-    environment: *airflow-env
+    environment:
+      <<: *airflow-env
+      DOCKER_HOST: unix:///var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID}"
     volumes:
       - ./dags:/opt/airflow/dags
       - /var/run/docker.sock:/var/run/docker.sock
