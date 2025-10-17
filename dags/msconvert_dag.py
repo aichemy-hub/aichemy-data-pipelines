@@ -9,6 +9,7 @@ from airflow.decorators import task
 from airflow.models import Variable
 from airflow.exceptions import AirflowSkipException
 from airflow.providers.docker.operators.docker import DockerOperator
+from docker.types import Mount
 
 # ---------------------------
 # Config via Airflow Variables (Admin → Variables)
@@ -144,7 +145,7 @@ with DAG(
         api_version="auto",
         docker_url="unix://var/run/docker.sock",
         mount_tmp_dir=False,
-        volumes=[f"{WATCH_DIR}:/data:rw"],  # host /data into container /data
+        mounts=[Mount(source=str(WATCH_DIR), target="/data", type="bind", read_only=False)],
         environment={"WINEDEBUG": "-all"},
         privileged=PRIVILEGED,
         pool=POOL_NAME,  # cap parallelism via pool size
