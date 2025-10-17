@@ -149,6 +149,7 @@ with DAG(
         environment={"WINEDEBUG": "-all"},
         privileged=PRIVILEGED,
         pool=POOL_NAME,  # cap parallelism via pool size
+        auto_remove=True,
     ).expand(
         command=lambda ctx: [
             "bash",
