@@ -1,8 +1,5 @@
 version: "3.9"
 
-env_file:
-  - .env
-
 x-airflow-env: &airflow-env
   AIRFLOW__CORE__EXECUTOR: LocalExecutor
   AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -52,8 +49,7 @@ services:
     entrypoint: ["/bin/bash","-lc"]
     command: >
       "airflow db upgrade &&
-       airflow users create --role Admin --username admin --password admin
-       --firstname A --lastname D --email admin@example.com || true &&
+       airflow users create --role Admin --username admin --password admin --firstname A --lastname D --email admin@example.com || true &&
        airflow pools set msconvert 4 'ProteoWizard conversions (parallel cap)' || true"
 
 volumes:
