@@ -133,7 +133,13 @@ with DAG(
         stem = outfile_stem(base)
         ext = "mzML" if FORMAT == "mzml" else "mzXML"
         outfile = f"{stem}.{ext}{'.gz' if GZIP_OUT else ''}"
-        return {"dpath": dpath, "base": base, "stem": stem, "outfile": outfile}
+        return {
+            "IN": dpath,
+            "BASE": base,
+            "STEM": stem,
+            "OUTFILE": outfile,
+            "WINEDEBUG": "-all", 
+        }
 
     discovered = discover_new_runs()
     prepared = wait_until_quiet.expand(dpath=discovered)
@@ -146,18 +152,17 @@ with DAG(
         docker_url="unix://var/run/docker.sock",
         mount_tmp_dir=False,
         mounts=[Mount(source=str(WATCH_DIR), target="/data", type="bind", read_only=False)],
-        environment={"WINEDEBUG": "-all"},
         privileged=PRIVILEGED,
-        pool=POOL_NAME,  # cap parallelism via pool size
+        pool=POOL_NAME,
         auto_remove=True,
-    ).expand(
-        command=lambda ctx: [
+        command=[
             "bash",
             "-lc",
             """
             set -euo pipefail
-            in="{{ ti.xcom_pull(task_ids='wait_until_quiet', key='return_value')['dpath'] }}"
-            stem="{{ ti.xcom_pull(task_ids='wait_until_quiet', key='return_value')['stem'] }}"
+
+            in="$IN"
+            stem="$STEM"
             outdir="{{ var.value.get('MS_OUTPUT_DIR', '/data/mzML') }}"
             fmt="{{ 'mzML' if var.value.get('MS_FORMAT', 'mzML').lower()=='mzml' else 'mzXML' }}"
             gzip="{{ var.value.get('MS_GZIP', '1') }}"
@@ -170,7 +175,10 @@ with DAG(
             echo "Running: wine msconvert \"$in\" ${args[*]} --outdir \"$outdir\" --outfile \"$stem\""
             wine msconvert "$in" "${args[@]}" --outdir "$outdir" --outfile "$stem"
             """,
-        ]
+        ],
+    ).expand(
+        # Map the operator by providing one environment dict per item
+        environment=prepared
     )
 
     @task
