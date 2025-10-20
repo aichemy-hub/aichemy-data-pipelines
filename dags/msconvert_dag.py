@@ -51,6 +51,9 @@ PRIVILEGED = Variable.get("MS_DOCKER_PRIVILEGED", default_var="true").lower() in
 POOL_NAME = Variable.get("MS_POOL", default_var="msconvert")  # controls concurrency
 HOST_DATA_DIR = Path(Variable.get("MS_HOST_DATA_DIR", default_var="/ABS/PATH/TO/host_data"))
 
+RUN_UID = int(Variable.get("MS_RUN_UID", default_var="50000"))
+RUN_GID = int(Variable.get("MS_RUN_GID", default_var="0"))
+
 # Logging
 log = logging.getLogger("msconvert.archive")
 
@@ -160,6 +163,7 @@ with DAG(
         privileged=PRIVILEGED,
         pool=POOL_NAME,
         auto_remove=True,
+        user=f"{RUN_UID}:{RUN_GID}",
         command=[
             "bash",
             "-lc",
