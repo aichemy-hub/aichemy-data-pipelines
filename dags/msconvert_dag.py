@@ -130,12 +130,14 @@ with DAG(
                 if not already_converted(base):
                     pending.append(str(p))
         pending.sort()
+        log.info("Discovered new runs: %s", pending)
         return pending
 
     @task
     def wait_until_quiet(dpath: str) -> Dict[str, str]:
         p = Path(dpath)
         if not p.exists():
+            log.warning("Watch directory disappeared: %s", dpath)
             raise AirflowSkipException(f"{dpath} disappeared")
         wait_for_quiet(p, QUIET_S, CHECK_INT_S)
         base = p.name[:-2] if p.name.endswith(".d") else p.name
