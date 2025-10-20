@@ -16,21 +16,22 @@ from docker.types import Mount
 # ---------------------------
 # Config via Airflow Variables (Admin → Variables)
 # ---------------------------
+
+# Key configuration parameters
+HOST_DATA_DIR = Path(Variable.get("MS_HOST_DATA_DIR", default_var="/ABS/PATH/TO/host_data"))
 WATCH_DIR = Path(Variable.get("MS_WATCH_DIR", default_var="/data"))
 OUTPUT_DIR = Path(Variable.get("MS_OUTPUT_DIR", default_var="/data/mzML"))
+ARCHIVE_DIR = Path(
+    Variable.get("MS_ARCHIVE_DIR", default_var=str(WATCH_DIR / "archives"))
+)
 FORMAT = Variable.get("MS_FORMAT", default_var="mzML").lower()  # mzml|mzxml
+
+# Fine-tuning options for file handling
 GZIP_OUT = Variable.get("MS_GZIP", default_var="1") in ("1", "true", "True")
-
-QUIET_S = int(Variable.get("MS_QUIET_SECONDS", default_var="20"))
-CHECK_INT_S = int(Variable.get("MS_CHECK_INTERVAL", default_var="5"))
-
 ARCHIVE_ORIG = Variable.get("MS_ARCHIVE_ORIGINAL", default_var="1") in (
     "1",
     "true",
     "True",
-)
-ARCHIVE_DIR = Path(
-    Variable.get("MS_ARCHIVE_DIR", default_var=str(OUTPUT_DIR / "archives"))
 )
 ARCHIVE_GZIP = Variable.get("MS_ARCHIVE_GZIP", default_var="1") in ("1", "true", "True")
 DELETE_ORIG = Variable.get("MS_DELETE_ORIG", default_var="1") in ("1", "true", "True")
@@ -38,6 +39,9 @@ ARCHIVE_POLICY = Variable.get(
     "MS_ARCHIVE_EXISTS_POLICY", default_var="skip"
 ).lower()  # skip|replace
 
+# Fine-tuning options for other behaviors
+QUIET_S = int(Variable.get("MS_QUIET_SECONDS", default_var="20"))
+CHECK_INT_S = int(Variable.get("MS_CHECK_INTERVAL", default_var="5"))
 PWIZ_IMAGE = Variable.get(
     "MS_PWIZ_IMAGE",
     default_var="proteowizard/pwiz-skyline-i-agree-to-the-vendor-licenses:latest",
@@ -47,10 +51,7 @@ PRIVILEGED = Variable.get("MS_DOCKER_PRIVILEGED", default_var="true").lower() in
     "true",
     "yes",
 )
-
 POOL_NAME = Variable.get("MS_POOL", default_var="msconvert")  # controls concurrency
-HOST_DATA_DIR = Path(Variable.get("MS_HOST_DATA_DIR", default_var="/ABS/PATH/TO/host_data"))
-
 RUN_UID = int(Variable.get("MS_RUN_UID", default_var="50000"))
 RUN_GID = int(Variable.get("MS_RUN_GID", default_var="0"))
 
