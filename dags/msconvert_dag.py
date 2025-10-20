@@ -64,7 +64,7 @@ log = logging.getLogger("msconvert.archive")
 def ts_utc() -> str:
     return datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
 
-
+# Get total size of all files in a directory tree
 def dir_size_bytes(p: Path) -> int:
     tot = 0
     if not p.exists():
@@ -77,7 +77,7 @@ def dir_size_bytes(p: Path) -> int:
                 pass
     return tot
 
-
+# Wait until directory size is stable for quiet_s seconds
 def wait_for_quiet(p: Path, quiet_s: int, check_s: int):
     stable_for, last = 0, -1
     while stable_for < quiet_s:
@@ -88,7 +88,7 @@ def wait_for_quiet(p: Path, quiet_s: int, check_s: int):
             stable_for, last = 0, size
         time.sleep(check_s)
 
-
+# Check if a base name has already been converted
 def already_converted(base: str) -> bool:
     if not OUTPUT_DIR.exists():
         return False
@@ -100,7 +100,7 @@ def already_converted(base: str) -> bool:
             return True
     return False
 
-
+# Generate output file stem with timestamp
 def outfile_stem(base: str) -> str:
     return f"{base}-{ts_utc()}"
 
@@ -194,7 +194,7 @@ with DAG(
     @task
     def archive_original(payload: Dict[str, str]):
         if not ARCHIVE_ORIG:
-            log.info("ARCHIVE_ORIG disabled; skipping archive step.")
+            log.debug("ARCHIVE_ORIG disabled; skipping archive step.")
             return
         dpath = Path(payload["IN"])
         base  = payload["BASE"]
@@ -208,7 +208,7 @@ with DAG(
             return
         else:
             try:
-                log.info("Confirmed output exists: %s (size=%d bytes)", out, out.stat().st_size)
+                log.debug("Confirmed output exists: %s (size=%d bytes)", out, out.stat().st_size)
             except FileNotFoundError:
                 log.warning("Race on output stat; skipping archive. out=%s", out)
                 return
@@ -216,16 +216,16 @@ with DAG(
         # policy: skip or replace prior archives of this base
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
         if ARCHIVE_POLICY == "replace":
-            log.info("Archive policy=replace: removing any existing archives for base=%s", base)
+            log.debug("Archive policy=replace: removing any existing archives for base=%s", base)
             for p in list(ARCHIVE_DIR.glob(f"{base}-*.tar")) + list(ARCHIVE_DIR.glob(f"{base}-*.tar.gz")):
                 try:
                     p.unlink()
-                    log.info("Removed old archive: %s", p)
+                    log.debug("Removed old archive: %s", p)
                 except Exception as e:
                     log.warning("Failed to remove existing archive %s: %s", p, e)
 
         src_bytes = dir_size_bytes(dpath)
-        log.info("Archiving source dir %s (size=%.2f MB) into %s", dpath, src_bytes / (1024**2), ARCHIVE_DIR)
+        log.debug("Archiving source dir %s (size=%.2f MB) into %s", dpath, src_bytes / (1024**2), ARCHIVE_DIR)
         
         mode = "w:gz" if ARCHIVE_GZIP else "w"
         suffix = ".tar.gz" if ARCHIVE_GZIP else ".tar"
@@ -238,7 +238,7 @@ with DAG(
             tmp.replace(final)
             arc_size = final.stat().st_size
             saved_pct = (1 - (arc_size / src_bytes)) * 100 if src_bytes > 0 else 0.0
-            log.info("Archive complete: %s (%.2f MB). Saved ~%.1f%% vs source.",
+            log.debug("Archive complete: %s (%.2f MB). Saved ~%.1f%% vs source.",
                     final, arc_size / (1024**2), saved_pct)
 
             if DELETE_ORIG:
