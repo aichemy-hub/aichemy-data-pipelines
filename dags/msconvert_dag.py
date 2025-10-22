@@ -40,7 +40,7 @@ ARCHIVE_POLICY = Variable.get(
 ).lower()  # skip|replace
 
 # Fine-tuning options for other behaviors
-QUIET_S = int(Variable.get("MS_QUIET_SECONDS", default_var="20"))
+QUIET_S = int(Variable.get("MS_QUIET_SECONDS", default_var="10"))
 CHECK_INT_S = int(Variable.get("MS_CHECK_INTERVAL", default_var="5"))
 PWIZ_IMAGE = Variable.get(
     "MS_PWIZ_IMAGE",
@@ -114,7 +114,7 @@ with DAG(
     schedule_interval="*/2 * * * *",  # poll every 2 minutes
     catchup=False,
     max_active_runs=1,  # one discovery cycle at a time
-    default_args={"retries": 1, "retry_delay": timedelta(minutes=5)},
+    default_args={"retries": 0},
     description="Discover .d, wait-for-quiet, convert via ProteoWizard, optionally archive originals",
     tags=["mass-spec", "msconvert", "mzml", "mzxml"],
 ) as dag:
@@ -179,13 +179,70 @@ with DAG(
             fmt="{{ 'mzML' if var.value.get('MS_FORMAT', 'mzML').lower()=='mzml' else 'mzXML' }}"
             gzip="{{ var.value.get('MS_GZIP', '1') }}"
 
+            # --- Wine prefix setup ---
+            export WINEARCH=win64
+            export WINEDEBUG=-all
+            export WINEPREFIX="/tmp/wineprefix_${STEM}"
+            echo "Using WINEPREFIX=$WINEPREFIX"
+
+            # Seed the prefix from the image's pre-installed /wineprefix64 so vendor readers are available
+            # (copying preserves registry/dlls; it's read-only so we copy to a writable location)
+            if [ -d "/wineprefix64" ]; then
+                # recreate clean target and copy contents
+                rm -rf "$WINEPREFIX"
+                mkdir -p "$WINEPREFIX"
+                # cp -a preserves structure/attrs; the trailing /. avoids nesting
+                echo "Seeding WINEPREFIX from /wineprefix64 ..."
+                cp -a /wineprefix64/. "$WINEPREFIX"/
+            else
+                # fallback: create empty prefix
+                mkdir -p "$WINEPREFIX"
+            fi
+            du -sh "$WINEPREFIX" 2>/dev/null || true
+
+            # Optional: writable HOME to avoid touching /root
+            export HOME="/tmp/home_${STEM}"
+            mkdir -p "$HOME"
+
+            # Initialize/upgrade the prefix (idempotent)
+            wineboot -u || true
+
+            # --- msconvert.exe location ---
+            if [ -f "/wineprefix64/drive_c/pwiz/msconvert.exe" ]; then
+                MS_EXE="/wineprefix64/drive_c/pwiz/msconvert.exe"
+            else
+                MS_EXE=""
+                for p in \
+                /usr/bin/msconvert.exe \
+                /usr/local/bin/msconvert.exe \
+                /opt/pwiz/msconvert.exe \
+                "/opt/ProteoWizard/msconvert.exe" \
+                "/Program Files/ProteoWizard/msconvert.exe"
+                do
+                    if [ -f "$p" ]; then MS_EXE="$p"; break; fi
+                done
+            fi
+
+            if [ -z "$MS_EXE" ]; then
+                echo "ERROR: Unable to locate msconvert.exe inside the container"
+                find / -maxdepth 5 -name msconvert.exe 2>/dev/null | head -n 50
+                exit 1
+            fi
+            echo "Resolved msconvert.exe at: $MS_EXE"
+            ls -l "$MS_EXE" || true
+
+            # --- msconvert args ---
             args=()
             if [ "$fmt" = "mzML" ]; then args+=(--mzML); else args+=(--mzXML); fi
             if [ "$gzip" = "1" ] || [ "$gzip" = "true" ] || [ "$gzip" = "True" ]; then args+=(--gzip); fi
 
             mkdir -p "$outdir"
-            echo "Running: wine msconvert \"$in\" ${args[*]} --outdir \"$outdir\" --outfile \"$stem\""
-            wine msconvert "$in" "${args[@]}" --outdir "$outdir" --outfile "$stem"
+
+            # Sanity: confirm input is visible and readable
+            ls -ld "$in" || { echo "ERROR: input not readable: $in"; exit 1; }
+
+            echo "Running: wine \"$MS_EXE\" \"$in\" ${args[*]} --outdir \"$outdir\" --outfile \"$stem\""
+            wine "$MS_EXE" "$in" "${args[@]}" --outdir "$outdir" --outfile "$stem"
             """,
         ],
     ).expand(
