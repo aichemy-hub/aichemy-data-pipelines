@@ -54,6 +54,7 @@ PRIVILEGED = Variable.get("MS_DOCKER_PRIVILEGED", default_var="true").lower() in
 POOL_NAME = Variable.get("MS_POOL", default_var="msconvert")  # controls concurrency
 RUN_UID = int(Variable.get("MS_RUN_UID", default_var="50000"))
 RUN_GID = int(Variable.get("MS_RUN_GID", default_var="0"))
+HOST_WINE_CACHE = Path(Variable.get("MS_HOST_WINECACHE_DIR", default_var="/var/lib/msconvert/wineprefix64"))
 
 # Logging
 log = logging.getLogger("msconvert.archive")
@@ -162,10 +163,12 @@ with DAG(
         api_version="auto",
         docker_url="unix://var/run/docker.sock",
         mount_tmp_dir=False,
-        mounts=[Mount(source=str(HOST_DATA_DIR), target="/data", type="bind", read_only=False)],
+        mounts=[Mount(source=str(HOST_DATA_DIR), target="/data", type="bind", read_only=False),
+                Mount(source=str(HOST_WINE_CACHE), target="/wineprefix_cached", type="bind", read_only=False),
+        ],
         privileged=PRIVILEGED,
         pool=POOL_NAME,
-        auto_remove=True,
+        auto_remove="success",
         user=f"{RUN_UID}:{RUN_GID}",
         command=[
             "bash",
@@ -179,66 +182,31 @@ with DAG(
             fmt="{{ 'mzML' if var.value.get('MS_FORMAT', 'mzML').lower()=='mzml' else 'mzXML' }}"
             gzip="{{ var.value.get('MS_GZIP', '1') }}"
 
-            # --- Wine prefix setup ---
+            # Use the preseeded prefix mounted at /wineprefix_cached
             export WINEARCH=win64
             export WINEDEBUG=-all
-            export WINEPREFIX="/tmp/wineprefix_${STEM}"
-            echo "Using WINEPREFIX=$WINEPREFIX"
+            export WINEPREFIX="/wineprefix_cached"
 
-            # Seed the prefix from the image's pre-installed /wineprefix64 so vendor readers are available
-            # (copying preserves registry/dlls; it's read-only so we copy to a writable location)
-            if [ -d "/wineprefix64" ]; then
-                # recreate clean target and copy contents
-                rm -rf "$WINEPREFIX"
-                mkdir -p "$WINEPREFIX"
-                # cp -a preserves structure/attrs; the trailing /. avoids nesting
-                echo "Seeding WINEPREFIX from /wineprefix64 ..."
-                cp -a /wineprefix64/. "$WINEPREFIX"/
-            else
-                # fallback: create empty prefix
-                mkdir -p "$WINEPREFIX"
-            fi
-            du -sh "$WINEPREFIX" 2>/dev/null || true
-
-            # Optional: writable HOME to avoid touching /root
+            # Writable HOME to avoid touching /root (cheap, local tmp)
             export HOME="/tmp/home_${STEM}"
             mkdir -p "$HOME"
 
-            # Initialize/upgrade the prefix (idempotent)
+            # Make sure prefix is valid (idempotent, cheap)
             wineboot -u || true
 
-            # --- msconvert.exe location ---
-            if [ -f "/wineprefix64/drive_c/pwiz/msconvert.exe" ]; then
-                MS_EXE="/wineprefix64/drive_c/pwiz/msconvert.exe"
-            else
-                MS_EXE=""
-                for p in \
-                /usr/bin/msconvert.exe \
-                /usr/local/bin/msconvert.exe \
-                /opt/pwiz/msconvert.exe \
-                "/opt/ProteoWizard/msconvert.exe" \
-                "/Program Files/ProteoWizard/msconvert.exe"
-                do
-                    if [ -f "$p" ]; then MS_EXE="$p"; break; fi
-                done
+            # msconvert.exe lives inside the cached prefix we mounted
+            MS_EXE="/wineprefix_cached/drive_c/pwiz/msconvert.exe"
+            if [ ! -f "$MS_EXE" ]; then
+            echo "ERROR: msconvert.exe not found at $MS_EXE"
+            ls -l /wineprefix_cached/drive_c/pwiz 2>/dev/null || true
+            exit 1
             fi
 
-            if [ -z "$MS_EXE" ]; then
-                echo "ERROR: Unable to locate msconvert.exe inside the container"
-                find / -maxdepth 5 -name msconvert.exe 2>/dev/null | head -n 50
-                exit 1
-            fi
-            echo "Resolved msconvert.exe at: $MS_EXE"
-            ls -l "$MS_EXE" || true
-
-            # --- msconvert args ---
             args=()
             if [ "$fmt" = "mzML" ]; then args+=(--mzML); else args+=(--mzXML); fi
             if [ "$gzip" = "1" ] || [ "$gzip" = "true" ] || [ "$gzip" = "True" ]; then args+=(--gzip); fi
 
             mkdir -p "$outdir"
-
-            # Sanity: confirm input is visible and readable
             ls -ld "$in" || { echo "ERROR: input not readable: $in"; exit 1; }
 
             echo "Running: wine \"$MS_EXE\" \"$in\" ${args[*]} --outdir \"$outdir\" --outfile \"$stem\""
