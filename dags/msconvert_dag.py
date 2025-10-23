@@ -18,7 +18,9 @@ from docker.types import Mount
 # ---------------------------
 
 # Key configuration parameters
-HOST_DATA_DIR = Path(Variable.get("MS_HOST_DATA_DIR", default_var="/ABS/PATH/TO/host_data"))
+HOST_DATA_DIR = Path(
+    Variable.get("MS_HOST_DATA_DIR", default_var="/ABS/PATH/TO/host_data")
+)
 WATCH_DIR = Path(Variable.get("MS_WATCH_DIR", default_var="/data"))
 OUTPUT_DIR = Path(Variable.get("MS_OUTPUT_DIR", default_var="/data/mzML"))
 ARCHIVE_DIR = Path(
@@ -40,7 +42,7 @@ ARCHIVE_POLICY = Variable.get(
 ).lower()  # skip|replace
 
 # Fine-tuning options for other behaviors
-QUIET_S = int(Variable.get("MS_QUIET_SECONDS", default_var="10"))
+QUIET_S = int(Variable.get("MS_QUIET_SECONDS", default_var="120"))
 CHECK_INT_S = int(Variable.get("MS_CHECK_INTERVAL", default_var="5"))
 PWIZ_IMAGE = Variable.get(
     "MS_PWIZ_IMAGE",
@@ -54,16 +56,20 @@ PRIVILEGED = Variable.get("MS_DOCKER_PRIVILEGED", default_var="true").lower() in
 POOL_NAME = Variable.get("MS_POOL", default_var="msconvert")  # controls concurrency
 RUN_UID = int(Variable.get("MS_RUN_UID", default_var="50000"))
 RUN_GID = int(Variable.get("MS_RUN_GID", default_var="0"))
-HOST_WINE_CACHE = Path(Variable.get("MS_HOST_WINECACHE_DIR", default_var="/var/lib/msconvert/wineprefix64"))
+HOST_WINE_CACHE = Path(
+    Variable.get("MS_HOST_WINECACHE_DIR", default_var="/var/lib/msconvert/wineprefix64")
+)
 
 # Logging
 log = logging.getLogger("msconvert.archive")
+
 
 # ---------------------------
 # Helpers
 # ---------------------------
 def ts_utc() -> str:
     return datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+
 
 # Get total size of all files in a directory tree
 def dir_size_bytes(p: Path) -> int:
@@ -78,6 +84,7 @@ def dir_size_bytes(p: Path) -> int:
                 pass
     return tot
 
+
 # Wait until directory size is stable for quiet_s seconds
 def wait_for_quiet(p: Path, quiet_s: int, check_s: int):
     stable_for, last = 0, -1
@@ -88,6 +95,7 @@ def wait_for_quiet(p: Path, quiet_s: int, check_s: int):
         else:
             stable_for, last = 0, size
         time.sleep(check_s)
+
 
 # Check if a base name has already been converted
 def already_converted(base: str) -> bool:
@@ -101,6 +109,7 @@ def already_converted(base: str) -> bool:
             return True
     return False
 
+
 # Generate output file stem with timestamp
 def outfile_stem(base: str) -> str:
     return f"{base}-{ts_utc()}"
@@ -112,7 +121,7 @@ def outfile_stem(base: str) -> str:
 with DAG(
     dag_id="msconvert_watch_simple",
     start_date=datetime(2025, 1, 1),
-    schedule_interval="*/2 * * * *",  # poll every 2 minutes
+    schedule_interval="*/5 * * * *",  # poll every 5 minutes
     catchup=False,
     max_active_runs=1,  # one discovery cycle at a time
     default_args={"retries": 0},
@@ -150,7 +159,7 @@ with DAG(
             "BASE": base,
             "STEM": stem,
             "OUTFILE": outfile,
-            "WINEDEBUG": "-all", 
+            "WINEDEBUG": "-all",
         }
 
     discovered = discover_new_runs()
@@ -163,8 +172,16 @@ with DAG(
         api_version="auto",
         docker_url="unix://var/run/docker.sock",
         mount_tmp_dir=False,
-        mounts=[Mount(source=str(HOST_DATA_DIR), target="/data", type="bind", read_only=False),
-                Mount(source=str(HOST_WINE_CACHE), target="/wineprefix_cached", type="bind", read_only=False),
+        mounts=[
+            Mount(
+                source=str(HOST_DATA_DIR), target="/data", type="bind", read_only=False
+            ),
+            Mount(
+                source=str(HOST_WINE_CACHE),
+                target="/wineprefix_cached",
+                type="bind",
+                read_only=False,
+            ),
         ],
         privileged=PRIVILEGED,
         pool=POOL_NAME,
@@ -224,27 +241,45 @@ with DAG(
             log.debug("ARCHIVE_ORIG disabled; skipping archive step.")
             return
         dpath = Path(payload["IN"])
-        base  = payload["BASE"]
-        log.info("Archive task starting | dpath=%s base=%s ARCHIVE_DIR=%s DELETE_ORIG=%s GZIP=%s POLICY=%s",
-         dpath, base, ARCHIVE_DIR, DELETE_ORIG, ARCHIVE_GZIP, ARCHIVE_POLICY)
-        
+        base = payload["BASE"]
+        log.info(
+            "Archive task starting | dpath=%s base=%s ARCHIVE_DIR=%s DELETE_ORIG=%s GZIP=%s POLICY=%s",
+            dpath,
+            base,
+            ARCHIVE_DIR,
+            DELETE_ORIG,
+            ARCHIVE_GZIP,
+            ARCHIVE_POLICY,
+        )
+
         # guard to ensure the expected output exists before archiving
         out = OUTPUT_DIR / payload.get("OUTFILE", "")
         if not out.exists():
-            log.warning("Expected output file is missing; will skip archive. out=%s", out)
+            log.warning(
+                "Expected output file is missing; will skip archive. out=%s", out
+            )
             return
         else:
             try:
-                log.debug("Confirmed output exists: %s (size=%d bytes)", out, out.stat().st_size)
+                log.debug(
+                    "Confirmed output exists: %s (size=%d bytes)",
+                    out,
+                    out.stat().st_size,
+                )
             except FileNotFoundError:
                 log.warning("Race on output stat; skipping archive. out=%s", out)
                 return
-        
+
         # policy: skip or replace prior archives of this base
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
         if ARCHIVE_POLICY == "replace":
-            log.debug("Archive policy=replace: removing any existing archives for base=%s", base)
-            for p in list(ARCHIVE_DIR.glob(f"{base}-*.tar")) + list(ARCHIVE_DIR.glob(f"{base}-*.tar.gz")):
+            log.debug(
+                "Archive policy=replace: removing any existing archives for base=%s",
+                base,
+            )
+            for p in list(ARCHIVE_DIR.glob(f"{base}-*.tar")) + list(
+                ARCHIVE_DIR.glob(f"{base}-*.tar.gz")
+            ):
                 try:
                     p.unlink()
                     log.debug("Removed old archive: %s", p)
@@ -252,8 +287,13 @@ with DAG(
                     log.warning("Failed to remove existing archive %s: %s", p, e)
 
         src_bytes = dir_size_bytes(dpath)
-        log.debug("Archiving source dir %s (size=%.2f MB) into %s", dpath, src_bytes / (1024**2), ARCHIVE_DIR)
-        
+        log.debug(
+            "Archiving source dir %s (size=%.2f MB) into %s",
+            dpath,
+            src_bytes / (1024**2),
+            ARCHIVE_DIR,
+        )
+
         mode = "w:gz" if ARCHIVE_GZIP else "w"
         suffix = ".tar.gz" if ARCHIVE_GZIP else ".tar"
         tmp = ARCHIVE_DIR / f"{base}-{ts_utc()}{suffix}.partial"
@@ -265,8 +305,12 @@ with DAG(
             tmp.replace(final)
             arc_size = final.stat().st_size
             saved_pct = (1 - (arc_size / src_bytes)) * 100 if src_bytes > 0 else 0.0
-            log.debug("Archive complete: %s (%.2f MB). Saved ~%.1f%% vs source.",
-                    final, arc_size / (1024**2), saved_pct)
+            log.debug(
+                "Archive complete: %s (%.2f MB). Saved ~%.1f%% vs source.",
+                final,
+                arc_size / (1024**2),
+                saved_pct,
+            )
 
             if DELETE_ORIG:
                 try:
