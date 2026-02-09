@@ -97,15 +97,14 @@ def wait_for_quiet(p: Path, quiet_s: int, check_s: int):
         time.sleep(check_s)
 
 
-# Check if a base name has already been converted
-def already_converted(base: str) -> bool:
-    if not OUTPUT_DIR.exists():
+# Check if a base name has already been converted (within a plate subdirectory)
+def already_converted(base: str, plate_rel: Path) -> bool:
+    outdir = OUTPUT_DIR / plate_rel
+    if not outdir.exists():
         return False
     exts = ["mzml", "mzML"] if FORMAT == "mzml" else ["mzxml", "mzXML"]
     for e in exts:
-        if list(OUTPUT_DIR.glob(f"{base}-*.{e}")) or list(
-            OUTPUT_DIR.glob(f"{base}-*.{e}.gz")
-        ):
+        if list(outdir.glob(f"{base}-*.{e}")) or list(outdir.glob(f"{base}-*.{e}.gz")):
             return True
     return False
 
@@ -131,14 +130,41 @@ with DAG(
 
     @task
     def discover_new_runs() -> List[str]:
+        """
+        Discover new runs in a one-level plate layout:
+
+          WATCH_DIR/
+            <plate dir>/
+              *.d/
+
+        Plate directory names may contain spaces.
+        """
         WATCH_DIR.mkdir(parents=True, exist_ok=True)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        pending = []
-        for p in WATCH_DIR.iterdir():
-            if p.is_dir() and p.name.endswith(".d"):
-                base = p.name[:-2]
-                if not already_converted(base):
-                    pending.append(str(p))
+        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+        pending: List[str] = []
+
+        # Only scan one level of plate directories under WATCH_DIR.
+        for plate in WATCH_DIR.iterdir():
+            if not plate.is_dir():
+                continue
+
+            # Avoid scanning output/archive trees if they live under WATCH_DIR
+            if plate.name in (OUTPUT_DIR.name, ARCHIVE_DIR.name):
+                continue
+
+            plate_rel = plate.relative_to(WATCH_DIR)
+
+            # Runs are directories ending with `.d` directly inside the plate directory.
+            for run in plate.iterdir():
+                if not (run.is_dir() and run.name.endswith(".d")):
+                    continue
+
+                base = run.name[:-2]
+                if not already_converted(base, plate_rel):
+                    pending.append(str(run))
+
         pending.sort()
         log.info("Discovered new runs: %s", pending)
         return pending
@@ -154,11 +180,15 @@ with DAG(
         stem = outfile_stem(base)
         ext = "mzML" if FORMAT == "mzml" else "mzXML"
         outfile = f"{stem}.{ext}{'.gz' if GZIP_OUT else ''}"
+        plate_rel = p.parent.relative_to(WATCH_DIR)
+        outdir = OUTPUT_DIR / plate_rel
         return {
             "IN": dpath,
             "BASE": base,
             "STEM": stem,
             "OUTFILE": outfile,
+            "PLATE_REL": plate_rel.as_posix(),
+            "OUTDIR": str(outdir),
             "WINEDEBUG": "-all",
         }
 
@@ -195,7 +225,7 @@ with DAG(
 
             in="$IN"
             stem="$STEM"
-            outdir="{{ var.value.get('MS_OUTPUT_DIR', '/data/mzML') }}"
+            outdir="$OUTDIR"
             fmt="{{ 'mzML' if var.value.get('MS_FORMAT', 'mzML').lower()=='mzml' else 'mzXML' }}"
             gzip="{{ var.value.get('MS_GZIP', '1') }}"
 
@@ -253,11 +283,10 @@ with DAG(
         )
 
         # guard to ensure the expected output exists before archiving
-        out = OUTPUT_DIR / payload.get("OUTFILE", "")
+        outdir = Path(payload.get("OUTDIR", str(OUTPUT_DIR)))
+        out = outdir / payload.get("OUTFILE", "")
         if not out.exists():
-            log.warning(
-                "Expected output file is missing; will skip archive. out=%s", out
-            )
+            log.warning("Expected output file is missing; will skip archive. out=%s", out)
             return
         else:
             try:
@@ -270,15 +299,18 @@ with DAG(
                 log.warning("Race on output stat; skipping archive. out=%s", out)
                 return
 
+        plate_rel = Path(payload.get("PLATE_REL", "."))
+        plate_archive_dir = ARCHIVE_DIR / plate_rel
+
         # policy: skip or replace prior archives of this base
-        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        plate_archive_dir.mkdir(parents=True, exist_ok=True)
         if ARCHIVE_POLICY == "replace":
             log.debug(
                 "Archive policy=replace: removing any existing archives for base=%s",
                 base,
             )
-            for p in list(ARCHIVE_DIR.glob(f"{base}-*.tar")) + list(
-                ARCHIVE_DIR.glob(f"{base}-*.tar.gz")
+            for p in list(plate_archive_dir.glob(f"{base}-*.tar")) + list(
+                plate_archive_dir.glob(f"{base}-*.tar.gz")
             ):
                 try:
                     p.unlink()
@@ -291,12 +323,12 @@ with DAG(
             "Archiving source dir %s (size=%.2f MB) into %s",
             dpath,
             src_bytes / (1024**2),
-            ARCHIVE_DIR,
+            plate_archive_dir,
         )
 
         mode = "w:gz" if ARCHIVE_GZIP else "w"
         suffix = ".tar.gz" if ARCHIVE_GZIP else ".tar"
-        tmp = ARCHIVE_DIR / f"{base}-{ts_utc()}{suffix}.partial"
+        tmp = plate_archive_dir / f"{base}-{ts_utc()}{suffix}.partial"
         final = Path(str(tmp).removesuffix(".partial"))
 
         try:
