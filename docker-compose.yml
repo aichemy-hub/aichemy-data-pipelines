@@ -31,7 +31,7 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - /var/run/docker.sock:/var/run/docker.sock     # for DockerOperator
-      - /mnt/aichemyrds/live/roar_ms_data:/data       # host data visible to Airflow
+      - /mnt/roar-facilitydata/live/ROAR-QTOF/AIchemy_converter:/data       # host data visible to Airflow
     command: webserver
 
   airflow-scheduler:
@@ -45,7 +45,7 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - /var/run/docker.sock:/var/run/docker.sock
-      - /mnt/aichemyrds/live/roar_ms_data:/data
+      - /mnt/roar-facilitydata/live/ROAR-QTOF/AIchemy_converter:/data
     command: scheduler
 
   airflow-init:
