@@ -59,6 +59,7 @@ RUN_GID = int(Variable.get("MS_RUN_GID", default_var="0"))
 HOST_WINE_CACHE = Path(
     Variable.get("MS_HOST_WINECACHE_DIR", default_var="/var/lib/msconvert/wineprefix64")
 )
+MAX_MAP = int(Variable.get("MS_MAX_MAP", default_var="1024"))
 
 # Logging
 log = logging.getLogger("msconvert.archive")
@@ -167,6 +168,13 @@ with DAG(
 
         pending.sort()
         log.info("Discovered new runs: %s", pending)
+        if len(pending) > MAX_MAP:
+            log.warning(
+                "Discovered %d runs, but capping to %d this cycle; remainder will be picked up next run.",
+                len(pending),
+                MAX_MAP,
+            )
+            pending = pending[:MAX_MAP]
         return pending
 
     @task
@@ -286,7 +294,9 @@ with DAG(
         outdir = Path(payload.get("OUTDIR", str(OUTPUT_DIR)))
         out = outdir / payload.get("OUTFILE", "")
         if not out.exists():
-            log.warning("Expected output file is missing; will skip archive. out=%s", out)
+            log.warning(
+                "Expected output file is missing; will skip archive. out=%s", out
+            )
             return
         else:
             try:
