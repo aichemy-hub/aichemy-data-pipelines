@@ -218,7 +218,7 @@ with DAG(
                 source=str(HOST_WINE_CACHE),
                 target="/wineprefix_cached",
                 type="bind",
-                read_only=False,
+                read_only=True,
             ),
         ],
         privileged=PRIVILEGED,
@@ -240,17 +240,18 @@ with DAG(
             # Use the preseeded prefix mounted at /wineprefix_cached
             export WINEARCH=win64
             export WINEDEBUG=-all
-            export WINEPREFIX="/wineprefix_cached"
+            tmp_prefix="/tmp/wineprefix_${STEM}"
+            cp -a /wineprefix_cached "$tmp_prefix"
+            export WINEPREFIX="$tmp_prefix"
 
             # Writable HOME to avoid touching /root (cheap, local tmp)
             export HOME="/tmp/home_${STEM}"
             mkdir -p "$HOME"
 
             # Make sure prefix is valid (idempotent, cheap)
-            wineboot -u || true
 
             # msconvert.exe lives inside the cached prefix we mounted
-            MS_EXE="/wineprefix_cached/drive_c/pwiz/msconvert.exe"
+            MS_EXE="$WINEPREFIX/drive_c/pwiz/msconvert.exe"
             if [ ! -f "$MS_EXE" ]; then
             echo "ERROR: msconvert.exe not found at $MS_EXE"
             ls -l /wineprefix_cached/drive_c/pwiz 2>/dev/null || true
