@@ -223,7 +223,7 @@ with DAG(
         ],
         privileged=PRIVILEGED,
         pool=POOL_NAME,
-        auto_remove="success",
+        auto_remove=True,
         user=f"{RUN_UID}:{RUN_GID}",
         command=[
             "bash",
