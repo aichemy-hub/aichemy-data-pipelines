@@ -197,7 +197,6 @@ with DAG(
             "OUTFILE": outfile,
             "PLATE_REL": plate_rel.as_posix(),
             "OUTDIR": str(outdir),
-            "WINEDEBUG": "-all",
         }
 
     discovered = discover_new_runs()
@@ -239,8 +238,8 @@ with DAG(
 
             # Use the preseeded prefix mounted at /wineprefix_cached
             export WINEARCH=win64
-            # Default to showing errors; override per-task by setting env var WINEDEBUG in the mapped payload
-            export WINEDEBUG="${WINEDEBUG:-err+all}"
+            # Default to showing Wine errors (override by setting WINEDEBUG in the environment if needed)
+            export WINEDEBUG="${WINEDEBUG:-+err}"
 
             tmp_prefix="/tmp/wineprefix_${STEM}"
             export WINEPREFIX="$tmp_prefix"
@@ -268,7 +267,6 @@ with DAG(
 
             mkdir -p "$outdir"
             ls -ld "$in" || { echo "ERROR: input not readable: $in"; exit 1; }
-            ls -ld "$outdir" || true
 
             # Quick write test to catch host permission issues early
             if ! ( touch "$outdir/.write_test" && rm -f "$outdir/.write_test" ); then
@@ -289,8 +287,8 @@ with DAG(
               echo "WINEDEBUG=$WINEDEBUG"
               echo "Input:  $in"
               echo "Outdir: $outdir"
-              echo "Listing outputs matching stem (if any):"
-              ls -la "$outdir" | sed -n '1,200p' || true
+              echo "Outputs (if any):"
+              ls -la "$outdir" 2>/dev/null | sed -n '1,120p' || true
               exit $rc
             fi
             """,
