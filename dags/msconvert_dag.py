@@ -239,16 +239,18 @@ with DAG(
 
             # Use the preseeded prefix mounted at /wineprefix_cached
             export WINEARCH=win64
-            export WINEDEBUG=-all
+            # Default to showing errors; override per-task by setting env var WINEDEBUG in the mapped payload
+            export WINEDEBUG="${WINEDEBUG:-err+all}"
+
             tmp_prefix="/tmp/wineprefix_${STEM}"
-            cp -a /wineprefix_cached "$tmp_prefix"
             export WINEPREFIX="$tmp_prefix"
 
-            # Writable HOME to avoid touching /root (cheap, local tmp)
+            # Ensure we always clean up the per-task prefix + HOME to avoid filling /tmp
             export HOME="/tmp/home_${STEM}"
-            mkdir -p "$HOME"
+            trap 'rm -rf "$WINEPREFIX" "$HOME"' EXIT
 
-            # Make sure prefix is valid (idempotent, cheap)
+            cp -a /wineprefix_cached "$WINEPREFIX"
+            mkdir -p "$HOME"
 
             # msconvert.exe is installed in the cached prefix under drive_c/pwiz
             MS_EXE="$WINEPREFIX/drive_c/pwiz/msconvert.exe"
@@ -266,9 +268,31 @@ with DAG(
 
             mkdir -p "$outdir"
             ls -ld "$in" || { echo "ERROR: input not readable: $in"; exit 1; }
+            ls -ld "$outdir" || true
+
+            # Quick write test to catch host permission issues early
+            if ! ( touch "$outdir/.write_test" && rm -f "$outdir/.write_test" ); then
+              echo "ERROR: output directory is not writable: $outdir"
+              id
+              ls -ld "$outdir"
+              exit 2
+            fi
 
             echo "Running: wine \"$MS_EXE\" \"$in\" ${args[*]} --outdir \"$outdir\" --outfile \"$stem\""
+            set +e
             wine "$MS_EXE" "$in" "${args[@]}" --outdir "$outdir" --outfile "$stem"
+            rc=$?
+            set -e
+
+            if [ $rc -ne 0 ]; then
+              echo "ERROR: msconvert exited non-zero (rc=$rc)"
+              echo "WINEDEBUG=$WINEDEBUG"
+              echo "Input:  $in"
+              echo "Outdir: $outdir"
+              echo "Listing outputs matching stem (if any):"
+              ls -la "$outdir" | sed -n '1,200p' || true
+              exit $rc
+            fi
             """,
         ],
     ).expand(
