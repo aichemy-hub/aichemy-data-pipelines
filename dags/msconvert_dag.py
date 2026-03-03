@@ -250,40 +250,14 @@ with DAG(
 
             # Make sure prefix is valid (idempotent, cheap)
 
-            # Locate msconvert.exe (path can differ depending on how the cache was seeded)
-            candidates=(
-              "$WINEPREFIX/drive_c/pwiz/msconvert.exe"
-              "$WINEPREFIX/drive_c/Program Files/ProteoWizard/msconvert.exe"
-              "$WINEPREFIX/drive_c/Program Files (x86)/ProteoWizard/msconvert.exe"
-              "/wineprefix_cached/drive_c/pwiz/msconvert.exe"
-              "/wineprefix_cached/drive_c/Program Files/ProteoWizard/msconvert.exe"
-              "/wineprefix_cached/drive_c/Program Files (x86)/ProteoWizard/msconvert.exe"
-            )
+            # msconvert.exe is installed in the cached prefix under drive_c/pwiz
+            MS_EXE="$WINEPREFIX/drive_c/pwiz/msconvert.exe"
 
-            MS_EXE=""
-            for c in "${candidates[@]}"; do
-              if [ -f "$c" ]; then
-                MS_EXE="$c"
-                break
-              fi
-            done
-
-            if [ -z "$MS_EXE" ]; then
-              echo "ERROR: msconvert.exe not found in expected locations. Debug follows."
-              echo "WINEPREFIX=$WINEPREFIX"
-              echo "Listing cached prefix top-level:"
-              ls -la /wineprefix_cached/drive_c 2>/dev/null || true
-              echo "Listing cached pwiz dir (if present):"
-              ls -la /wineprefix_cached/drive_c/pwiz 2>/dev/null || true
-              echo "Searching for msconvert.exe under cached prefix (up to depth 6):"
-              find /wineprefix_cached -maxdepth 6 -iname 'msconvert.exe' -print 2>/dev/null || true
-              echo "Listing tmp prefix drive_c (if present):"
-              ls -la "$WINEPREFIX/drive_c" 2>/dev/null || true
+            if [ ! -f "$MS_EXE" ]; then
+              echo "ERROR: msconvert.exe not found at $MS_EXE"
               exit 1
             fi
 
-            # If we ended up using the cached path, run it via the tmp prefix anyway.
-            # (Wine uses WINEPREFIX for registry / temp; executable can live elsewhere.)
             echo "Using msconvert at: $MS_EXE"
 
             args=()
