@@ -48,6 +48,21 @@ services:
       - /mnt/roar-facilitydata/live/ROAR-QTOF/AIchemy_converter:/data
     command: scheduler
 
+  grafana:
+    image: grafana/grafana:latest
+    depends_on: [postgres]
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_SIGNOUT_MENU: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/msconvert.json
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+
   airflow-init:
     image: apache/airflow:2.9.3
     depends_on: [ postgres ]
@@ -60,3 +75,4 @@ services:
 
 volumes:
   pgdata:
+  grafana_data:

@@ -1,0 +1,177 @@
+{
+  "title": "msconvert Pipeline",
+  "uid": "msconvert-pipeline",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-24h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["msconvert"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Files converted (24 h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "airflow-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT COUNT(*) AS value FROM task_instance WHERE task_id = 'convert_one' AND state = 'success' AND end_date > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "green" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Failures (24 h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "airflow-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT COUNT(*) AS value FROM task_instance WHERE task_id = 'convert_one' AND state = 'failed' AND end_date > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Avg conversion time (min)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "airflow-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT ROUND(AVG(EXTRACT(EPOCH FROM (end_date - start_date)) / 60.0)::numeric, 1) AS value FROM task_instance WHERE task_id = 'convert_one' AND state = 'success' AND end_date > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Conversions per hour",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
+      "datasource": { "type": "postgres", "uid": "airflow-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT date_trunc('hour', end_date) AS time, COUNT(*) AS \"converted\" FROM task_instance WHERE task_id = 'convert_one' AND state = 'success' AND $__timeFilter(end_date) GROUP BY 1 ORDER BY 1",
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "rawSql": "SELECT date_trunc('hour', end_date) AS time, COUNT(*) AS \"failed\" FROM task_instance WHERE task_id = 'convert_one' AND state = 'failed' AND $__timeFilter(end_date) GROUP BY 1 ORDER BY 1",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "failed" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Recent DAG runs",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
+      "datasource": { "type": "postgres", "uid": "airflow-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT dr.execution_date AS \"Run Time\", dr.state AS \"Run Status\", (SELECT COUNT(*) FROM task_instance ti WHERE ti.run_id = dr.run_id AND ti.dag_id = dr.dag_id AND ti.task_id = 'convert_one' AND ti.state = 'success') AS \"Converted\", (SELECT COUNT(*) FROM task_instance ti WHERE ti.run_id = dr.run_id AND ti.dag_id = dr.dag_id AND ti.task_id = 'convert_one' AND ti.state = 'failed') AS \"Failed\", (SELECT COUNT(*) FROM task_instance ti WHERE ti.run_id = dr.run_id AND ti.dag_id = dr.dag_id AND ti.task_id = 'convert_one' AND ti.state = 'skipped') AS \"Skipped\" FROM dag_run dr WHERE dr.dag_id = 'msconvert_watch_simple' ORDER BY dr.execution_date DESC LIMIT 50",
+          "format": "table"
+        }
+      ],
+      "options": {
+        "sortBy": [{ "displayName": "Run Time", "desc": true }],
+        "footer": { "show": false }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Run Status" },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "success": { "color": "green", "index": 0 } } },
+                  { "type": "value", "options": { "failed": { "color": "red", "index": 1 } } },
+                  { "type": "value", "options": { "running": { "color": "blue", "index": 2 } } }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

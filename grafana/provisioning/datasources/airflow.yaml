@@ -1,0 +1,15 @@
+apiVersion: 1
+datasources:
+  - name: Airflow PostgreSQL
+    uid: airflow-postgres
+    type: postgres
+    url: postgres:5432
+    database: airflow
+    user: airflow
+    secureJsonData:
+      password: airflow
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+    isDefault: true
+    editable: true
