@@ -37,44 +37,10 @@
       }
     },
     {
-      "id": 2,
-      "title": "Failures (24 h)",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
-      "datasource": { "type": "postgres", "uid": "airflow-postgres" },
-      "targets": [
-        {
-          "refId": "A",
-          "rawSql": "SELECT COUNT(*) AS value FROM task_instance WHERE task_id = 'convert_one' AND state = 'failed' AND end_date > NOW() - INTERVAL '24 hours'",
-          "format": "table"
-        }
-      ],
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "auto",
-        "orientation": "auto"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
-            ]
-          }
-        },
-        "overrides": []
-      }
-    },
-    {
       "id": 3,
       "title": "Avg conversion time (min)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "datasource": { "type": "postgres", "uid": "airflow-postgres" },
       "targets": [
         {
@@ -111,22 +77,12 @@
           "rawSql": "SELECT date_trunc('hour', end_date) AS time, COUNT(*) AS \"converted\" FROM task_instance WHERE task_id = 'convert_one' AND state = 'success' AND $__timeFilter(end_date) GROUP BY 1 ORDER BY 1",
           "format": "time_series"
         },
-        {
-          "refId": "B",
-          "rawSql": "SELECT date_trunc('hour', end_date) AS time, COUNT(*) AS \"failed\" FROM task_instance WHERE task_id = 'convert_one' AND state = 'failed' AND $__timeFilter(end_date) GROUP BY 1 ORDER BY 1",
-          "format": "time_series"
-        }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": { "lineWidth": 2, "fillOpacity": 10 }
         },
-        "overrides": [
-          {
-            "matcher": { "id": "byName", "options": "failed" },
-            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "tooltip": { "mode": "multi" },
@@ -137,7 +93,7 @@
       "id": 5,
       "title": "Recent DAG runs",
       "type": "table",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
       "datasource": { "type": "postgres", "uid": "airflow-postgres" },
       "targets": [
         {
@@ -178,7 +134,7 @@
       "id": 6,
       "title": "Converted files",
       "type": "table",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
       "datasource": { "type": "postgres", "uid": "airflow-postgres" },
       "targets": [
         {
