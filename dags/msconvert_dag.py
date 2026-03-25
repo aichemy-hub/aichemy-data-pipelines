@@ -213,12 +213,6 @@ with DAG(
             Mount(
                 source=str(HOST_DATA_DIR), target="/data", type="bind", read_only=False
             ),
-            Mount(
-                source=str(HOST_WINE_CACHE),
-                target="/wineprefix_cached",
-                type="bind",
-                read_only=True,
-            ),
         ],
         privileged=PRIVILEGED,
         pool=POOL_NAME,
@@ -236,23 +230,26 @@ with DAG(
             fmt="{{ 'mzML' if var.value.get('MS_FORMAT', 'mzML').lower()=='mzml' else 'mzXML' }}"
             gzip="{{ var.value.get('MS_GZIP', '1') }}"
 
-            # Use the preseeded prefix mounted at /wineprefix_cached
+            # Seed a per-task writable Wine prefix from the image's own /wineprefix64.
+            # This is the same approach that worked before; the trap ensures cleanup so
+            # /tmp does not accumulate across tasks even if auto_remove is unreliable.
             export WINEARCH=win64
-            # Force Wine error output regardless of image defaults (pwiz image ships with WINEDEBUG=-all)
-            export WINEDEBUG=+err,+file,+loaddll
+            export WINEDEBUG=-all
 
             tmp_prefix="/tmp/wineprefix_${STEM}"
             export WINEPREFIX="$tmp_prefix"
-
-            # Ensure we always clean up the per-task prefix + HOME to avoid filling /tmp
             export HOME="/tmp/home_${STEM}"
             trap 'rm -rf "$WINEPREFIX" "$HOME"' EXIT
 
-            cp -a /wineprefix_cached "$WINEPREFIX"
+            echo "Seeding WINEPREFIX from /wineprefix64 ..."
+            cp -a /wineprefix64/. "$WINEPREFIX"/
             mkdir -p "$HOME"
 
-            # msconvert.exe is installed in the cached prefix under drive_c/pwiz
-            MS_EXE="$WINEPREFIX/drive_c/pwiz/msconvert.exe"
+            # Upgrade the prefix to match the running Wine version (idempotent, required for CLR init)
+            wineboot -u || true
+
+            # Always use the exe from the image's original prefix (not the copy)
+            MS_EXE="/wineprefix64/drive_c/pwiz/msconvert.exe"
 
             if [ ! -f "$MS_EXE" ]; then
               echo "ERROR: msconvert.exe not found at $MS_EXE"
