@@ -76,7 +76,7 @@
           "refId": "A",
           "rawSql": "SELECT date_trunc('hour', end_date) AS time, COUNT(*) AS \"converted\" FROM task_instance WHERE task_id = 'convert_one' AND state = 'success' AND $__timeFilter(end_date) GROUP BY 1 ORDER BY 1",
           "format": "time_series"
-        },
+        }
       ],
       "fieldConfig": {
         "defaults": {
