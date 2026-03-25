@@ -173,5 +173,28 @@
         ]
       }
     }
+  ,
+    {
+      "id": 6,
+      "title": "Converted files",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "datasource": { "type": "postgres", "uid": "airflow-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT ti.end_date AS \"Converted At\", x_in.path AS \"Input Path\", x_outdir.path || '/' || x_outfile.path AS \"Output Path\" FROM task_instance ti JOIN (SELECT dag_id, run_id, map_index, convert_from(value, 'UTF8')::jsonb #>> '{}' AS path FROM xcom WHERE task_id = 'wait_until_quiet' AND key = 'IN') x_in ON x_in.dag_id = ti.dag_id AND x_in.run_id = ti.run_id AND x_in.map_index = ti.map_index JOIN (SELECT dag_id, run_id, map_index, convert_from(value, 'UTF8')::jsonb #>> '{}' AS path FROM xcom WHERE task_id = 'wait_until_quiet' AND key = 'OUTDIR') x_outdir ON x_outdir.dag_id = ti.dag_id AND x_outdir.run_id = ti.run_id AND x_outdir.map_index = ti.map_index JOIN (SELECT dag_id, run_id, map_index, convert_from(value, 'UTF8')::jsonb #>> '{}' AS path FROM xcom WHERE task_id = 'wait_until_quiet' AND key = 'OUTFILE') x_outfile ON x_outfile.dag_id = ti.dag_id AND x_outfile.run_id = ti.run_id AND x_outfile.map_index = ti.map_index WHERE ti.task_id = 'convert_one' AND ti.state = 'success' AND $__timeFilter(ti.end_date) ORDER BY ti.end_date DESC",
+          "format": "table"
+        }
+      ],
+      "options": {
+        "sortBy": [{ "displayName": "Converted At", "desc": true }],
+        "footer": { "show": false }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
   ]
 }
