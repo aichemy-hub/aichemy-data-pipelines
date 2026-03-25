@@ -238,8 +238,8 @@ with DAG(
 
             # Use the preseeded prefix mounted at /wineprefix_cached
             export WINEARCH=win64
-            # Default to showing Wine errors (override by setting WINEDEBUG in the environment if needed)
-            export WINEDEBUG="${WINEDEBUG:-+err}"
+            # Force Wine error output regardless of image defaults (pwiz image ships with WINEDEBUG=-all)
+            export WINEDEBUG=+err,+file,+loaddll
 
             tmp_prefix="/tmp/wineprefix_${STEM}"
             export WINEPREFIX="$tmp_prefix"
@@ -267,6 +267,9 @@ with DAG(
 
             mkdir -p "$outdir"
             ls -ld "$in" || { echo "ERROR: input not readable: $in"; exit 1; }
+            ls -la "$in/" || echo "WARN: cannot list contents of input dir: $in"
+            echo "Container identity: $(id)"
+            echo "WINEPREFIX drive_c contents: $(ls "$WINEPREFIX/drive_c/" 2>/dev/null || echo 'unreadable')"
 
             # Quick write test to catch host permission issues early
             if ! ( touch "$outdir/.write_test" && rm -f "$outdir/.write_test" ); then
