@@ -10,6 +10,7 @@ from airflow import DAG
 from airflow.decorators import task
 from airflow.models import Variable
 from airflow.exceptions import AirflowSkipException
+from airflow.utils.trigger_rule import TriggerRule
 from airflow.providers.docker.operators.docker import DockerOperator
 from docker.types import Mount
 
@@ -60,6 +61,7 @@ HOST_WINE_CACHE = Path(
     Variable.get("MS_HOST_WINECACHE_DIR", default_var="/var/lib/msconvert/wineprefix64")
 )
 MAX_MAP = int(Variable.get("MS_MAX_MAP", default_var="1024"))
+FAIL_THRESHOLD = int(Variable.get("MS_FAIL_THRESHOLD", default_var="10"))
 
 # Logging
 log = logging.getLogger("msconvert.archive")
@@ -98,8 +100,18 @@ def wait_for_quiet(p: Path, quiet_s: int, check_s: int):
         time.sleep(check_s)
 
 
+# Paths for per-file sentinel files written into the output directory
+def _skip_sentinel(base: str, plate_rel: Path) -> Path:
+    return OUTPUT_DIR / plate_rel / f"{base}.skip"
+
+def _attempts_file(base: str, plate_rel: Path) -> Path:
+    return OUTPUT_DIR / plate_rel / f"{base}.attempts"
+
+
 # Check if a base name has already been converted (within a plate subdirectory)
 def already_converted(base: str, plate_rel: Path) -> bool:
+    if _skip_sentinel(base, plate_rel).exists():
+        return True  # permanently skipped after repeated failures
     outdir = OUTPUT_DIR / plate_rel
     if not outdir.exists():
         return False
@@ -113,6 +125,37 @@ def already_converted(base: str, plate_rel: Path) -> bool:
 # Generate output file stem with timestamp
 def outfile_stem(base: str) -> str:
     return f"{base}-{ts_utc()}"
+
+
+# Called by Airflow after each failed convert_one attempt.
+# Tracks cross-run failures per file; writes a .skip sentinel after MAX_ATTEMPTS.
+def _on_convert_failure(context):
+    MAX_ATTEMPTS = 3
+    ti = context["task_instance"]
+    env = ti.xcom_pull(task_ids="wait_until_quiet",
+                       map_indexes=ti.map_index,
+                       key="return_value")
+    if not env:
+        return
+    base = env["BASE"]
+    plate_rel = Path(env["PLATE_REL"])
+    outdir = Path(env["OUTDIR"])
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    attempts_path = _attempts_file(base, plate_rel)
+    try:
+        count = int(attempts_path.read_text().strip()) if attempts_path.exists() else 0
+    except Exception:
+        count = 0
+    count += 1
+    log.warning("convert_one failure %d/%d for %s", count, MAX_ATTEMPTS, base)
+
+    if count >= MAX_ATTEMPTS:
+        _skip_sentinel(base, plate_rel).touch()
+        attempts_path.unlink(missing_ok=True)
+        log.warning("Marked %s as permanently skipped after %d failures", base, MAX_ATTEMPTS)
+    else:
+        attempts_path.write_text(str(count))
 
 
 # ---------------------------
@@ -218,6 +261,7 @@ with DAG(
         pool=POOL_NAME,
         auto_remove=True,
         user=f"{RUN_UID}:{RUN_GID}",
+        on_failure_callback=_on_convert_failure,
         command=[
             "bash",
             "-lc",
@@ -298,7 +342,7 @@ with DAG(
         environment=prepared
     )
 
-    @task
+    @task(trigger_rule=TriggerRule.ALL_DONE)
     def archive_original(payload: Dict[str, str]):
         if not ARCHIVE_ORIG:
             log.debug("ARCHIVE_ORIG disabled; skipping archive step.")
@@ -394,4 +438,40 @@ with DAG(
 
     finalized = archive_original.expand(payload=prepared)
 
-    prepared >> convert >> finalized
+    @task(trigger_rule=TriggerRule.ALL_DONE)
+    def verify_batch(payloads: list, **context):
+        """Fail the DAG run if too many convert_one tasks failed."""
+        from airflow.models import TaskInstance as TI
+        from airflow.utils.state import TaskInstanceState
+        from airflow import settings
+
+        run_id = context["run_id"]
+        dag_id = context["dag"].dag_id
+        with settings.Session() as session:
+            tis = session.query(TI).filter(
+                TI.dag_id == dag_id,
+                TI.run_id == run_id,
+                TI.task_id == "convert_one",
+            ).all()
+
+        total = len(tis)
+        failed = sum(1 for t in tis if t.state == TaskInstanceState.FAILED)
+        skipped = sum(1 for t in tis if t.state == TaskInstanceState.SKIPPED)
+        succeeded = total - failed - skipped
+        threshold = min(FAIL_THRESHOLD, total)
+
+        log.info(
+            "Batch complete: total=%d succeeded=%d failed=%d skipped=%d threshold=%d",
+            total, succeeded, failed, skipped, threshold,
+        )
+        if total > 0 and failed == total:
+            raise RuntimeError(
+                f"All {total} convert_one tasks failed — check instrument data or data mounts."
+            )
+        if failed > threshold:
+            raise RuntimeError(
+                f"{failed}/{total} convert_one tasks failed, exceeding threshold of {threshold}."
+            )
+
+    verify = verify_batch(prepared)
+    prepared >> convert >> finalized >> verify
