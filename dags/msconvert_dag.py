@@ -260,6 +260,7 @@ with DAG(
         privileged=PRIVILEGED,
         pool=POOL_NAME,
         auto_remove=True,
+        image_pull_policy='IfNotPresent',
         user=f"{RUN_UID}:{RUN_GID}",
         on_failure_callback=_on_convert_failure,
         command=[
